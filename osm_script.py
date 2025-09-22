@@ -8,19 +8,21 @@ import pandas as pd
 
 
 #example of nested list with grouped districts
-BUNDES_GROUPS = [
-    ["Baden-Württemberg"],
-    ["Bayern"],
-    ["Berlin", "Bremen"],
-    ["Brandenburg","Hamburg"],
-    ["Hessen","Mecklenburg-Vorpommern","Rheinland-Pfalz"],
-    ["Niedersachsen"],
-    ["Nordrhein-Westfalen"],
-    ["Saarland","Sachsen","Sachsen-Anhalt", "Schleswig-Holstein","Thüringen"]
+#BUNDES_GROUPS = [
+ #   ["Baden-Württemberg"],
+  #  ["Bayern"],
+   # ["Berlin", "Bremen"],
+    #["Brandenburg","Hamburg"],
+   # ["Hessen","Mecklenburg-Vorpommern","Rheinland-Pfalz"],
+   # ["Niedersachsen"],
+    #["Nordrhein-Westfalen"],
+   # ["Saarland","Sachsen","Sachsen-Anhalt", "Schleswig-Holstein","Thüringen"]
 ]
 
 def fetch_osm_region(region_name:str) -> list: 
-    """Fetch AWO/Arbeiterwohlfahrt entries from Overpass for a single region."""
+    """Fetch AWO/Arbeiterwohlfahrt entries from Overpass for a single region.
+        """
+      
     query = f"""[out:json][timeout:180];
             area["name"="{region_name}"]->.searchArea;
             (
@@ -44,9 +46,8 @@ def fetch_osm_region(region_name:str) -> list:
     try:
         result = response.json()
     except Exception as e:
-        print(f"Error for {region}, {e}")
+        print(f"Error for {region_name}, {e}")
         return []     
-
     r=[]
     for el in result.get("elements", []):
         tags=el.get("tags", {})
@@ -82,6 +83,6 @@ def osm_extractor_groups(nested_list: list, delay: int=10) ->pd.DataFrame:
 
 
 if __name__=="__main__":
-    df=osm_extractor_groups(BUNDES_GROUPS)
+    df=osm_extractor_groups(regions)
     df.to_csv("awo_locations_osmscript.csv", index=False, encoding='utf-8')
     print(f'Saved {len(df)} results total')
