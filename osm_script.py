@@ -17,7 +17,7 @@ import pandas as pd
    # ["Niedersachsen"],
     #["Nordrhein-Westfalen"],
    # ["Saarland","Sachsen","Sachsen-Anhalt", "Schleswig-Holstein","Thüringen"]
-]
+#]
 
 def fetch_osm_region(region_name:str) -> list: 
     """Fetch AWO/Arbeiterwohlfahrt entries from Overpass for a single region.
@@ -42,12 +42,17 @@ def fetch_osm_region(region_name:str) -> list:
                 out center;
              """
     main_overpass_api = "https://overpass-api.de/api/interpreter"
-    response=requests.get(main_overpass_api, params={'data':query}) 
-    try:
-        result = response.json()
-    except Exception as e:
-        print(f"Error for {region_name}, {e}")
-        return []     
+    for attempt in range(3):
+        try:
+            response=requests.get(main_overpass_api, params={'data':query}, timeout=50) 
+            if response.status_code==200:
+                result = response.json()
+            else:
+                print(f"status {response.status_code}... retrying")
+        except Exception as e:
+            print(f"Error for {region_name}, {e}. Retry {attempt+1}")
+            return []  
+        time.sleep(10)   
     r=[]
     for el in result.get("elements", []):
         tags=el.get("tags", {})
@@ -83,6 +88,7 @@ def osm_extractor_groups(nested_list: list, delay: int=10) ->pd.DataFrame:
 
 
 if __name__=="__main__":
+    name_datetime = time.strftime("%Y%m%d-%H%M%S")
     df=osm_extractor_groups(regions)
-    df.to_csv("awo_locations_osmscript.csv", index=False, encoding='utf-8')
+    df.to_csv(f"awo_{name_datetime}_osmscript.csv", index=False, encoding='utf-8')
     print(f'Saved {len(df)} results total')
