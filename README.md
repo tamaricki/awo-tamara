@@ -1,7 +1,7 @@
-## Different Approaches of Getting Publicly Awavilable Data
+## Different Approaches of Getting Publicly Available Data
 
 **osm_ script** uses OSM overpass API to get locations information like region, name, address, zip code, phone, email, website from OSM. 
-Since API gets easily overloaded (504 Gateway Timeout) , search is done on region level, and not for whole country. Smaller regions are grouped together. Also script contains delays between requests and retry loops due to frequest time-out errors. 
+Since API gets easily overloaded (504 Gateway Timeout) , search is done on region level, and not for whole country. Smaller regions are grouped together. Also script contains delays between requests and retry loops due to frequest time-out errors. Currently, it seems that it runs better when functions are imported into osm_eda sheet than standalone.
 
 ### References: 
 
