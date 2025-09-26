@@ -85,7 +85,7 @@ def osm_extractor_groups(nested_list: list, delay: int=10) ->pd.DataFrame:
 
 
 
-# for running it standalone  : 
+# for running it standalone  (for some reasoon works better when functions are imported in file): 
 if __name__=="__main__":
     name_datetime = time.strftime("%Y%m%d-%H%M%S")
     df=osm_extractor_groups(BUNDES_GROUPS)
