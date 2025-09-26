@@ -4,25 +4,26 @@ import csv
 import time
 import pandas as pd
 
+#AWO associations are fetched with help of OSM overpass API. Since API gets easily overloaded (504 Gateway Timeout) , 
+# search is done on region level, and not for whole country. Smaller regions are grouped together
+# script contains delays between requests and retry loops due to frequest time-out errors. 
+# in query are given filters on node way level to narrow the results down. 
 
 
 
-#example of nested list with grouped districts
-#BUNDES_GROUPS = [
- #   ["Baden-Württemberg"],
-  #  ["Bayern"],
-   # ["Berlin", "Bremen"],
-    #["Brandenburg","Hamburg"],
-   # ["Hessen","Mecklenburg-Vorpommern","Rheinland-Pfalz"],
-   # ["Niedersachsen"],
-    #["Nordrhein-Westfalen"],
-   # ["Saarland","Sachsen","Sachsen-Anhalt", "Schleswig-Holstein","Thüringen"]
-#]
+BUNDES_GROUPS = [
+    ["Baden-Württemberg"],
+    ["Bayern"],
+    ["Berlin", "Bremen"],
+    ["Brandenburg","Hamburg"],
+    ["Hessen","Mecklenburg-Vorpommern","Rheinland-Pfalz"],
+    ["Niedersachsen"],
+    ["Nordrhein-Westfalen"],
+    ["Saarland","Sachsen","Sachsen-Anhalt", "Schleswig-Holstein","Thüringen"]
+]
 
 def fetch_osm_region(region_name:str) -> list: 
-    """Fetch AWO/Arbeiterwohlfahrt entries from Overpass for a single region.
-        """
-      
+    """Fetch AWO/Arbeiterwohlfahrt entries from Overpass for a single region."""
     query = f"""[out:json][timeout:180];
             area["name"="{region_name}"]->.searchArea;
             (
@@ -44,11 +45,9 @@ def fetch_osm_region(region_name:str) -> list:
     main_overpass_api = "https://overpass-api.de/api/interpreter"
     for attempt in range(3):
         try:
-            response=requests.get(main_overpass_api, params={'data':query}, timeout=50) 
-            if response.status_code==200:
-                result = response.json()
-            else:
-                print(f"status {response.status_code}... retrying")
+            response=requests.get(main_overpass_api, params={'data':query}, timeout=100) 
+            response.raise_for_status()
+            result = response.json()
         except Exception as e:
             print(f"Error for {region_name}, {e}. Retry {attempt+1}")
             return []  
@@ -86,9 +85,9 @@ def osm_extractor_groups(nested_list: list, delay: int=10) ->pd.DataFrame:
 
 
 
-
+# for running it standalone  : 
 if __name__=="__main__":
     name_datetime = time.strftime("%Y%m%d-%H%M%S")
-    df=osm_extractor_groups(regions)
+    df=osm_extractor_groups(BUNDES_GROUPS)
     df.to_csv(f"awo_{name_datetime}_osmscript.csv", index=False, encoding='utf-8')
     print(f'Saved {len(df)} results total')
