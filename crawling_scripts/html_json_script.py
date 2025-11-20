@@ -9,10 +9,10 @@ import json
 from datetime import datetime 
 import pandas as pd
 import requests
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup as bs
 from scraping_utils import fetch_webpage, extract_impressum_data
 
-DEFAULT_CONFIG = {
+SCRAPING_CONFIG = {
     'user_agent': 'AWO-Research-Bot/1.0 (Research project; contact@awo.org)',
     'delay_min': 1.0,
     'delay_max': 3.0,
@@ -226,6 +226,158 @@ def get_page_attribute_by_url(url):
                 return  data['page_attribute']    
     return None
 
+def normalize(url: str) -> str:
+    """Normalize URL for consistent comparison."""
+    return url.strip().rstrip('/')
+
+def fetch_html_xml(url, headers=HEADERS, timeout=20, retries = SCRAPING_CONFIG.get('max_retries',3)) -> bs | None:
+    """
+    Fetch and parse HTML content from a URL using BeautifulSoup.
+        url (str): The target web page URL.
+        headers (dict, optional): HTTP headers (User-Agent recommended).
+        timeout (int, optional): Timeout in seconds for the request.
+    Returns:
+        BeautifulSoup: Parsed BeautifulSoup(bs) object if successful, else None.
+    """
+    if headers is None:
+        headers = {
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/122.0 Safari/537.36"
+            )
+        }
+    if url.lower().startswith("mailto:"):
+        email = url.replace("mailto:", "").strip()
+        html = f"<html><body><p>Email: {email}</p></body></html>"
+        #return bs(html, "html5lib")
+        return bs("<html></html>", "html5lib")
+
+    if url.lower().startswith("tel:"):
+        phone = url.replace("tel:", "").strip()
+        html = f"<html><body><p>Phone: {phone}</p></body></html>"
+        return bs("<html></html>", "html5lib")
+
+    if url.lower().endswith((".pdf", ".jpg", ".jpeg", ".png", ".gif", ".tif", ".bmp")):
+        print(f"Skipping non-HTML document: {url}")
+        # Return an empty soup object to avoid NoneType errors later
+        return bs("<html></html>", "html5lib")
+    for attempt in range(retries +1):
+        try:
+            response = requests.get(url, headers=headers, timeout=timeout)
+            response.raise_for_status()  # raises HTTPError for bad status codes
+            content_type = (response.headers.get("Content-Type") or "")
+            text = response.text.strip()
+
+            is_xml_by_header = "xml" in content_type
+            is_xml_by_content = text.startswith("<?xml") or text.startswith("<urlset") or text.startswith("<sitemapindex")
+            if is_xml_by_header or is_xml_by_content:
+                return bs(text, "xml")
+            return bs(response.text, "html5lib")
+
+        except requests.exceptions.RequestException as e:
+            print(f"[Attempt {attempt}/{retries}] Error fetching {url}: {e}")
+            print(f"Error fetching {url}: {e}")
+            if attempt < retries:
+                time.sleep(2 ** attempt)  # Exponential backoff before retrying 
+                print("Retrying...")
+            else:
+                print(f"Failed to fetch {url} after {retries} attempts.")
+        # Return an empty soup to avoid NoneType errors later
+    return bs("<html></html>", "html5lib")
+
+def extract_links(soup:bs, base_url:str, attribute = None)-> list:
+    """
+    Extracts pagination links from a BeautifulSoup  (bs) object.
+    It extracts links from HTML and XML sites 
+    soup : BeautifulSoup
+        Parsed HTML/XML content.
+
+    base_url : str
+        URL of the page being parsed, used to build absolute URLs.
+
+     attribute : str (optional)
+        A **class string** (e.g. "simple-sitemap-page main")
+    """
+    exclude_keywords = [
+        "datenschutz", "stellen", "job", "beitrit", "struktur", "spenden", 'formular', 'herunterladen', 'sitemap', 'testseite',
+        "veranstaltungen", "sprache", "newsletter", 'news', 'suche', 'agb', 'mailto:', 'tel:', 'fax', 'presse',
+        'transparent', 'vorstand', 'freiwilig', 'download', 'beschwerde','facebook', 'feedback', "kontrast", 'praesidium',
+        'barrierefrei', 'instagram', 'twitter', 'youtube', 'linkedin', 'team', 'leitbild', 'leitsätze', 'geschichte', 
+        'eingabehilfe', 'warenkorb', 'mitmachen', 'termin', 'aktuell', 'chronik', 'satzung', 'bariere', 'vollzeit', 'teilzeit', 'uploads']
+    exclude_re = re.compile("|".join(exclude_keywords), re.I)
+    links = []
+    unique_links=set()
+    results = []
+
+    if soup is None or not hasattr(soup, "find_all"):
+        print(f"Invalid or empty soup object for {base_url}")
+        return []
+    
+    base_parts = urlparse(base_url)
+    base_domain = f"{base_parts.scheme}://{base_parts.netloc}"
+
+    #-----XML sitemap support ----
+    xml_locs = soup.find_all("loc") 
+    if xml_locs:
+        for loc in xml_locs:
+            href = loc.get_text(strip=True)
+            if not href:
+                continue
+            href_lower = href.lower()
+            if exclude_re.search(href_lower):
+                continue
+            if href_lower not in unique_links:
+                unique_links.add(href_lower)
+                links.append(href_lower)
+        return links
+
+    #----- extract links only from area defined by attribute
+    if attribute:
+        if not isinstance(attribute, str):
+            print("ERROR: attribute must be a class string.")
+            return []
+
+        # Split class string into individual class tokens
+        class_tokens = attribute.split()
+
+        # Find first element that has ALL class tokens
+        section = soup.find(
+            lambda tag:
+                tag.has_attr("class") and
+                all(cls in tag.get("class", []) for cls in class_tokens)
+        )
+
+        if section is None:
+            print(f"No element found with class string: '{attribute}'")
+            return []
+
+        anchor_tags = section.find_all("a", href=True)
+    else:
+        # No attribute → extract from whole soup
+        anchor_tags = soup.find_all("a", href=True)
+
+    for a in anchor_tags:
+        href = a['href'].strip()
+        text = a.get_text(strip=True)
+        if not href or not text:
+            continue
+
+        if href.startswith("de/") and not href.startswith("/"):
+            href = "/" + href
+        full_url = urljoin(base_domain, href)
+        lower_text = text.lower()
+        full_url_lower = full_url.lower()
+        #filter by keywords
+        if exclude_re.search(lower_text) or exclude_re.search(full_url_lower):
+            continue
+        norm = normalize(full_url)
+        if norm not in unique_links:
+            unique_links.add(norm)
+            links.append(norm)
+
+    return links
+
 
 
 sites_with_links = get_urls_by_config('page_with_links') 
@@ -235,18 +387,33 @@ sites_with_page_attribute = get_urls_by_config('page_attribute')
 
 
 html_text_data = []
-for l in sites_with_links:
-    html_text_data.append(fetch_webpage(l))
+for site in sites_with_links:
+    bs_site = fetch_html_xml(site)
+    if not bs_site:
+      continue
+    print(f'Extracting links out of {site}')
+    links_list = extract_links(bs_site, site)
+    for l in links_list:
+        html_text_data.append(fetch_webpage(l))
+        time.sleep(SCRAPING_CONFIG.get('delay_min'))
 for s in sites_with_contacts:
     html_text_data.append(fetch_webpage(s))
-for p in sites_with_page_attribute:
-    html_text_data.append(fetch_webpage(p))
+    time.sleep(SCRAPING_CONFIG.get('delay_min'))
+for site in sites_with_page_attribute:
+    bs_site = fetch_html_xml(site)
+    if not bs_site:
+      continue
+    attr = get_page_attribute_by_url(site)
+    links_list = extract_links(bs_site, site, attr)
+    for p in links_list:
+        html_text_data.append(fetch_webpage(p))
+        time.sleep(SCRAPING_CONFIG.get('delay_min'))
 
 OUT_DIR = Path("./raw_html_text")
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 
 output_file = OUT_DIR / f"results_html_text_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
-print(len(html_text_data))
+print(len(html_text_data), 'html texts saved')
 
 try:
     with open(output_file, "w", encoding="utf-8") as f:

@@ -28,7 +28,7 @@ DEFAULT_CONFIG = {
 }
 
 
-def fetch_webpage(url: str, config: Dict = None) -> Tuple[bool, Optional[str], Optional[str]]:
+def fetch_webpage(url: str, config: Dict = None) -> Tuple[bool, str, Optional[str], Optional[str]]:
     """
     Fetch a webpage with proper error handling and rate limiting.
 
@@ -37,7 +37,7 @@ def fetch_webpage(url: str, config: Dict = None) -> Tuple[bool, Optional[str], O
         config: Scraping configuration dictionary
 
     Returns:
-        Tuple of (success: bool, content: str or None, error: str or None)
+        Tuple of (success: bool, url: str, content: str or None, error: str or None)
     """
     if config is None:
         config = DEFAULT_CONFIG
@@ -52,7 +52,7 @@ def fetch_webpage(url: str, config: Dict = None) -> Tuple[bool, Optional[str], O
             response = requests.get(url, headers=headers, timeout=config['timeout'])
             response.raise_for_status()
 
-            return True, response.text, None
+            return True, url, response.text, None
 
         except requests.exceptions.RequestException as e:
             error_msg = f"Attempt {attempt + 1}/{config['max_retries']} failed: {str(e)}"
@@ -61,7 +61,7 @@ def fetch_webpage(url: str, config: Dict = None) -> Tuple[bool, Optional[str], O
             # Exponential backoff
             time.sleep(2 ** attempt)
 
-    return False, None, "Max retries exceeded"
+    return False, url, None, "Max retries exceeded"
 
 
 def extract_contact_info(html_content: str) -> Dict[str, List[str]]:
