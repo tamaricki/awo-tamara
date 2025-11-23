@@ -208,6 +208,33 @@ PAGE_SITE_CONFIG = {
     }
 } 
 
+def fetch_webpage(url: str, config: Dict = None):
+    """
+    Fetch a webpage and return a structured result.
+    ALWAYS returns: (success, url, content, error)
+    """
+    if config is None:
+        config = SCRAPING_CONFIG
+
+    headers = {"User-Agent": config['user_agent']}
+
+    for attempt in range(config['max_retries']):
+        try:
+            time.sleep(uniform(config['delay_min'], config['delay_max']))
+
+            response = requests.get(url, headers=headers, timeout=config['timeout'])
+            response.raise_for_status()
+            return True, url, response.text, None
+
+        except Exception as e:
+            err = f"[{attempt+1}/{config['max_retries']}] {e}"
+            if attempt == config['max_retries'] - 1:
+                return False, url, None, err
+
+            time.sleep(2 ** attempt)  # backoff
+
+    return False, url, None, "Unknown error"
+
 def get_urls_by_config(config_key) -> list:
     """
     Retrieves URLs from PAGE_SITE_CONFIG based on a specific configuration key.
@@ -380,44 +407,130 @@ def extract_links(soup:bs, base_url:str, attribute = None)-> list:
 
 
 
-sites_with_links = get_urls_by_config('page_with_links') 
-sites_with_contacts = get_urls_by_config('page_with_contacts')
-sites_with_page_attribute = get_urls_by_config('page_attribute')
+# sites_with_links = get_urls_by_config('page_with_links') 
+# sites_with_contacts = get_urls_by_config('page_with_contacts')
+# sites_with_page_attribute = get_urls_by_config('page_attribute')
 
 
 
-html_text_data = []
-for site in sites_with_links:
-    bs_site = fetch_html_xml(site)
-    if not bs_site:
-      continue
-    print(f'Extracting links out of {site}')
-    links_list = extract_links(bs_site, site)
-    for l in links_list:
-        html_text_data.append(fetch_webpage(l))
-        time.sleep(SCRAPING_CONFIG.get('delay_min'))
-for s in sites_with_contacts:
-    html_text_data.append(fetch_webpage(s))
-    time.sleep(SCRAPING_CONFIG.get('delay_min'))
-for site in sites_with_page_attribute:
-    bs_site = fetch_html_xml(site)
-    if not bs_site:
-      continue
-    attr = get_page_attribute_by_url(site)
-    links_list = extract_links(bs_site, site, attr)
-    for p in links_list:
-        html_text_data.append(fetch_webpage(p))
-        time.sleep(SCRAPING_CONFIG.get('delay_min'))
+def scrape_all_html_text():
+    """
+    Clean, safe scraping of:
+    - pages_with_links -> extract links from page -> fetch each link
+    - pages_with_contacts -> fetch directly
+    - pages with class-based attribute -> extract links and fetch
+    
+    All HTML is saved once, deduplicated.
+    """
 
-OUT_DIR = Path("./raw_html_text")
-OUT_DIR.mkdir(parents=True, exist_ok=True)
+    visited = set()
+    html_results = []
 
-output_file = OUT_DIR / f"results_html_text_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
-print(len(html_text_data), 'html texts saved')
+    # --------------------------
+    # 1) Pages with links
+    # --------------------------
 
-try:
+    sites_with_links = get_urls_by_config('page_with_links')
+
+    for site in sites_with_links:
+        print(f"\n🔎 Extracting links from main page: {site}")
+
+        soup = fetch_html_xml(site)
+        if soup is None:
+            print("  ❌ Failed to fetch page")
+            continue
+
+        links = extract_links(soup, site)
+
+        print(f"  → Found {len(links)} links")
+
+        for link in links:
+            norm = normalize(link)
+            if norm in visited:
+                continue
+            visited.add(norm)
+
+            success, url_fetched, content, error = fetch_webpage(norm)
+            html_results.append({
+                "source": site,
+                "url": url_fetched,
+                "success": success,
+                "html_text": content,
+                "error": error
+            })
+
+    # --------------------------
+    # 2) Direct contact pages
+    # --------------------------
+
+    sites_with_contacts = get_urls_by_config('page_with_contacts')
+
+    for site in sites_with_contacts:
+        norm = normalize(site)
+        if norm in visited:
+            continue
+        visited.add(norm)
+
+        print(f"\n📄 Fetching contact page: {site}")
+
+        success, url_fetched, content, error = fetch_webpage(norm)
+        html_results.append({
+            "source": "direct_contact",
+            "url": url_fetched,
+            "success": success,
+            "html_text": content,
+            "error": error
+        })
+
+    # --------------------------
+    # 3) Pages with attribute-based link extraction
+    # --------------------------
+
+    sites_with_page_attribute = get_urls_by_config('page_attribute')
+
+    for site in sites_with_page_attribute:
+        print(f"\n🔎 Extracting classified links from: {site}")
+
+        attr = get_page_attribute_by_url(site)
+
+        soup = fetch_html_xml(site)
+        if soup is None:
+            continue
+
+        links = extract_links(soup, site, attribute=attr)
+        print(f"  → Found {len(links)} links")
+
+        for link in links:
+            norm = normalize(link)
+            if norm in visited:
+                continue
+            visited.add(norm)
+
+            success, url_fetched, content, error = fetch_webpage(norm)
+            html_results.append({
+                "source": f"class:{attr}",
+                "url": url_fetched,
+                "success": success,
+                "html_text": content,
+                "error": error
+            })
+
+    # --------------------------
+    # Save results
+    # --------------------------
+
+    OUT_DIR = Path("./raw_html_text")
+    OUT_DIR.mkdir(parents=True, exist_ok=True)
+
+    output_file = OUT_DIR / f"results_html_text_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+    print(f"\n💾 Saving {len(html_results)} HTML pages...")
+
     with open(output_file, "w", encoding="utf-8") as f:
-        json.dump(html_text_data, f, ensure_ascii=False, indent=2)
-        print(f"\n Extraction complete. Saved {len(html_text_data)} entries to {output_file.name}")
-except Exception as e:
-    print(f" Failed to write JSON: {e}") 
+        json.dump(html_results, f, ensure_ascii=False, indent=2)
+
+    print(f"✅ Done. Saved to {output_file.name}")
+
+    return html_results
+
+if __name__== "__main__":
+    scrape_all_html_text()
